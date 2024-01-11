@@ -13,15 +13,15 @@ class MainWindow;
 }
 QT_END_NAMESPACE
 
-class ServerAPI : public QObject {
+class Temperature : public QObject {
     Q_OBJECT
 
 public:
-    ServerAPI(QObject* parent);
-    virtual ~ServerAPI(){};
-    void GetTemperatureByInterval(QDateTime, QDateTime);
+    Temperature(QObject* parent);
+    virtual ~Temperature(){};
+    void getTemperatureRange(QDateTime, QDateTime);
 public slots:
-    void GetTemperatureNow();
+    void getCurrentTemperature();
 signals:
     void currentTemperatureSignal(double);
     void temperatureRangeSignal(QLineSeries*);
@@ -43,7 +43,7 @@ public slots:
 private:
     Ui::MainWindow *ui;
     QTimer*         timer;
-    ServerAPI*    api;
+    Temperature*    fromServer;
     QChartView* chartView;
 };
 #endif // MAINWINDOW_H
