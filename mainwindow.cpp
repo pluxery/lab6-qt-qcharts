@@ -12,67 +12,53 @@
 #include <QtCharts>
 #include <QtCharts/QChart>
 
-Temperature::Temperature(QObject* parent) : QObject(parent) { }
+ServerAPI::ServerAPI(QObject* parent) : QObject(parent) { }
 
-void Temperature::getCurrentTemperature() {
+void ServerAPI::GetTemperatureNow() {
+    QNetworkRequest req(QUrl("http://localhost:8000/current-temperature"));
+    QNetworkAccessManager* networkManager = new QNetworkAccessManager();
+    QNetworkReply* networkReply = networkManager->get(req);
 
-    QTextStream(stdout) << "Get now..." << Qt::endl;
-
-    QNetworkRequest request(QUrl("http://localhost:8000/api/now"));
-    QNetworkAccessManager* manager = new QNetworkAccessManager();
-    QNetworkReply* reply = manager->get(request);
-
-    QObject::connect(reply, &QNetworkReply::finished, [reply, this]() {
-        QString ReplyText = reply->readAll();
-        QJsonDocument jsonDocument = QJsonDocument::fromJson(ReplyText.toUtf8());
-        QJsonObject jsonObject = jsonDocument.object();
-        QJsonValue jsonValue = jsonObject.value("data");
-        reply->deleteLater();
-        double temperature = jsonValue.toObject().value("temperature").toDouble();
-        QTextStream(stdout) << "Temperature now: " << temperature << Qt::endl;
+    QObject::connect(networkReply, &QNetworkReply::finished, [networkReply, this]() {
+        QString ReplyText = networkReply->readAll();
+        QJsonDocument doc = QJsonDocument::fromJson(ReplyText.toUtf8());
+        QJsonObject obj = doc.object();
+        QJsonValue val = obj.value("data");
+        networkReply->deleteLater();
+        double temperature = val.toObject().value("temperature").toDouble();
         emit currentTemperatureSignal(temperature);
     });
 }
 
-void Temperature::getTemperatureRange(QDateTime start, QDateTime finish) {
-    QTextStream(stdout) << "get interval..." << Qt::endl;
+void ServerAPI::GetTemperatureByInterval(QDateTime begin, QDateTime end) {
+    QString beginStartDateTimeString = begin.toString(QString("yyyy-MM-dd hh:mm:ss"));
+    QString endDateTimeString = end.toString(QString("yyyy-MM-dd hh:mm:ss"));
+    QUrl url = QUrl("http://localhost:8000/temperature-by-range");
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
 
-    QString startStr = start.toString(QString("yyyy-MM-dd hh:mm:ss"));
-    QString finishStr = finish.toString(QString("yyyy-MM-dd hh:mm:ss"));
+    QByteArray body;
+    body.append("start=" + beginStartDateTimeString.toStdString());
+    body.append("end=" + endDateTimeString.toStdString());
 
-    QTextStream(stdout) << "got date inputs: " << startStr << ", " << finishStr << Qt::endl;
-
-    QUrl url = QUrl("http://localhost:8000/api/interval");
-    QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-
-    QByteArray data;
-    // data.append("start=2024-01-01");
-    // data.append("end=2024-01-05");
-    data.append("start=" + startStr.toStdString());
-    data.append("end=" + finishStr.toStdString());
-
-    QNetworkAccessManager* manager = new QNetworkAccessManager();
-    QNetworkReply* reply = manager->post(request, data);
+    QNetworkAccessManager* networkManager = new QNetworkAccessManager();
+    QNetworkReply* reply = networkManager->post(req, body);
     QObject::connect(reply, &QNetworkReply::finished, [reply, this]() {
         QString replyStr = reply->readAll();
-        QJsonDocument jsonDocument = QJsonDocument::fromJson(replyStr.toUtf8());
-        QJsonObject jsonObject = jsonDocument.object();
-        QJsonValue jsonValue = jsonObject.value("data");
-        QJsonArray points = jsonValue.toArray();
+        QJsonDocument doc = QJsonDocument::fromJson(replyStr.toUtf8());
+        QJsonObject obj = doc.object();
+        QJsonValue val = obj.value("result");
+        QJsonArray rows = val.toArray();
 
         QLineSeries *series = new QLineSeries();
 
-        for (auto p: points) {
-            double yPoint = p.toObject().value("temperature").toDouble();
+        for (auto row: rows) {
+            double y = row.toObject().value("temperature").toDouble();
 
-            QString xDateStr = p.toObject().value("created_at").toString();
-            QDateTime xDate = QDateTime::fromString(xDateStr, "yyyy-MM-dd HH:mm:ss");
-            double xPoint = xDate.toMSecsSinceEpoch();
-
-            series->append(xPoint, yPoint);
-
-           // QTextStream(stdout) << "got point (x, y): " << xPoint << ", " << yPoint << Qt::endl;
+            QString xDateTimeString = row.toObject().value("created_at").toString();
+            QDateTime xDateTime = QDateTime::fromString(xDateTimeString, "yyyy-MM-dd HH:mm:ss");
+            double x = xDateTime.toMSecsSinceEpoch();
+            series->append(x, y);
         }
 
         reply->deleteLater();
@@ -84,7 +70,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , timer (new QTimer(this))
-    , fromServer(new Temperature(this))
+    , api(new ServerAPI(this))
     , chartView(new QChartView(this)) {
     ui->setupUi(this);
 
@@ -94,19 +80,19 @@ MainWindow::MainWindow(QWidget *parent)
     ui->endDateTimeRange->setDisplayFormat(QString("dd.MM.yyyy hh:mm:ss"));
     ui->endDateTimeRange->setDateTime(QDateTime::currentDateTime());
 
-    fromServer->getTemperatureRange(QDateTime::currentDateTime().addMonths(-1), QDateTime::currentDateTime());
+    api->GetTemperatureByInterval(QDateTime::currentDateTime().addMonths(-1), QDateTime::currentDateTime());
 
     ui->gridLayout->addWidget(chartView);
 
-    fromServer->getCurrentTemperature();
+    api->GetTemperatureNow();
     timer->setInterval(5000);
     timer->start();
 
     connect(ui->startDateTimeRange, SIGNAL(dateTimeChanged(QDateTime)), this, SLOT(updatePlotStartChange(QDateTime)));
     connect(ui->endDateTimeRange, SIGNAL(dateTimeChanged(QDateTime)), this, SLOT(updatePlotEndChange(QDateTime)));
-    connect(fromServer,SIGNAL(currentTemperatureSignal(double)), this, SLOT(setCurrentTemperature(double)));
-    connect(timer,SIGNAL(timeout()), fromServer,SLOT(getCurrentTemperature()));
-    connect(fromServer, SIGNAL(temperatureRangeSignal(QLineSeries*)), this, SLOT(plotChartChange(QLineSeries*)));
+    connect(api,SIGNAL(currentTemperatureSignal(double)), this, SLOT(setCurrentTemperature(double)));
+    connect(timer,SIGNAL(timeout()), api,SLOT(getCurrentTemperature()));
+    connect(api, SIGNAL(temperatureRangeSignal(QLineSeries*)), this, SLOT(plotChartChange(QLineSeries*)));
 }
 
 MainWindow::~MainWindow() {
@@ -114,11 +100,11 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::updatePlotStartChange(QDateTime start) {
-    fromServer->getTemperatureRange(start, ui->endDateTimeRange->dateTime());
+    api->GetTemperatureByInterval(start, ui->endDateTimeRange->dateTime());
 }
 
 void MainWindow::updatePlotEndChange(QDateTime finish) {
-    fromServer->getTemperatureRange(ui->startDateTimeRange->dateTime(), finish);
+    api->GetTemperatureByInterval(ui->startDateTimeRange->dateTime(), finish);
 }
 
 void MainWindow::setCurrentTemperature(double temperatureValue) {
